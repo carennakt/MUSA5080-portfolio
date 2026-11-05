@@ -1,0 +1,307 @@
+---
+title: "cktpart"
+format: html
+---
+
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(caret)
+
+Sys.getenv("CENSUS_API_KEY") != ""  
+```
+
+### The cross-validation helper
+
+```{r}
+#| label: cv-helper
+ctrl <- trainControl(method = "cv", number = 10)
+
+cv_rmse <- function(formula, data) {
+  df <- if (inherits(data, "sf")) st_drop_geometry(data) else data
+  vars <- all.vars(formula)
+  bad <- vars[sapply(vars, function(v) any(is.na(df[[v]])))]
+  if (length(bad) > 0) {
+    stop("These variables have NAs: ", paste(bad, collapse = ", "),
+         ". Fill them or choose another variable (Rule 1: don't drop rows).")
+  }
+  set.seed(5080)
+  fit <- train(formula, data = df, method = "lm", trControl = ctrl)
+  fit$results$RMSE
+}
+```
+
+### The model log
+
+
+
+```{r}
+#| label: log-start
+model_log <- tibble(
+  model   = character(),
+  added   = character(),
+  cv_rmse = numeric(),
+  notes   = character()
+)
+```
+
+
+
+
+```{r}
+#| label: pull
+cook_tracts <- get_acs(
+  geography = "tract",
+  state = "IL",
+  county = "Cook",
+  variables = c(
+    total_pop = "B01003_001",
+    medincome = "B19013_001",
+    ba = "B15003_022",
+    ma = "B15003_023",
+    prof = "B15003_024",
+    phd = "B15003_025",
+    popover25 = "B15003_001",
+    vacant = "B25002_003",
+    owner_occ   = "B25003_002",
+    tenure_tot  = "B25003_001"
+  ),
+  year = 2023,
+  output = "wide",
+  geometry = TRUE
+) %>%
+  st_transform(3435)
+
+```
+
+```{r}
+
+chicago <- get_acs(geography = "place", state = "IL",
+                   variables = "B01003_001", year = 2023,
+                   geometry = TRUE) %>%
+  filter(NAME == "Chicago city, Illinois") %>%
+  st_transform(3435)
+
+nrow(chicago)
+
+
+in_chicago <- st_intersects(st_point_on_surface(cook_tracts), chicago, sparse = FALSE)[, 1]
+chi_tracts <- cook_tracts %>% filter(in_chicago)
+
+```
+```{r}
+#education
+chi_tracts = chi_tracts %>%
+  mutate(
+    edulevel = baE + maE + profE + phdE,
+    edulevel_moe = sqrt(baM^2 + maM^2 + profM^2 + phdM^2),
+    edulevelpct = edulevel / popover25E * 100,
+    edulevelpct_moe = moe_prop(edulevel, popover25E, edulevel_moe, popover25M) * 100,
+    edu_cv = (edulevelpct_moe / 1.645) / edulevelpct * 100
+  )
+#income
+chi_tracts = chi_tracts %>%
+  mutate(
+    medinc_cv = (medincomeM / 1.645) / medincomeE * 100
+  )
+```
+
+```{r}
+#| label: load-join-split
+chi_housesf = st_read("C:/cktportfolio/chicago-housing-price-challenge/all_sales.geojson") 
+
+st_crs(chi_housesf)$epsg   
+head(chi_housesf)         
+
+
+chi_housesf = st_transform(chi_housesf, st_crs(chi_tracts))
+chi_house_tracts = st_join(chi_housesf, chi_tracts, join = st_nearest_feature)
+
+chi_house_tracts = chi_house_tracts %>%
+  mutate(
+    medincomeE = if_else(is.na(medincomeE),
+                         median(medincomeE, na.rm = TRUE),
+                         medincomeE),
+    edulevelpct = if_else(is.na(edulevelpct),           # CHANGED: new fill
+                          median(edulevelpct, na.rm = TRUE),
+                          edulevelpct)
+  )
+
+sum(is.na(chi_house_tracts$GEOID))
+sum(is.na(chi_house_tracts$medincomeE))
+sum(is.na(chi_house_tracts$edulevelpct))   
+
+chi_train = chi_house_tracts %>% filter(!is.na(sale_price))  
+
+chi_test  = chi_house_tracts %>% filter(is.na(sale_price))    
+
+
+nrow(chi_train)   
+nrow(chi_test)   
+```
+```{r}
+
+
+```
+
+
+```{r}
+
+#| label: load-all-sales
+all_sales = st_read("C:/cktportfolio/chicago-housing-price-challenge/all_sales_complete (2).geojson")
+n_before = nrow(all_sales)
+n_before   # should be about 30,792; if it's ~2.4 million, this file was saved after the bad join
+
+# Only pull tract variables that aren't already in the file (avoids .x/.y duplicates)
+tract_vars = setdiff(c("vacantE", "edulevelpct", "medincomeE",
+                       "owner_occE", "tenure_totE"),
+                     names(all_sales))
+
+all_sales = all_sales %>%
+  st_drop_geometry() %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326, remove = FALSE) %>%
+  st_transform(st_crs(chi_tracts)) %>%
+  st_join(chi_tracts %>% select(all_of(tract_vars)), join = st_nearest_feature)
+
+nrow(all_sales) == n_before   # must print TRUE
+
+# Fill any NAs with the median (your cv_rmse helper won't run with NAs)
+all_sales = all_sales %>%
+  mutate(across(all_of(tract_vars), ~ if_else(is.na(.x), median(.x, na.rm = TRUE), .x)))
+
+train_df = all_sales %>%
+  st_drop_geometry() %>%
+  filter(split == "train") %>%
+  mutate(across(c(year, sale_qrt, num_bedrooms, num_half_baths, num_fireplaces), as.factor))
+
+nrow(train_df)
+
+```
+
+
+```{r}
+train_df <- all_sales %>%
+  sf::st_drop_geometry() %>%
+  filter(split == "train")
+
+train_df = train_df %>%
+  mutate(across(c(year, sale_qrt, num_bedrooms, num_half_baths, num_fireplaces), as.factor))
+
+test_df <- all_sales %>%
+  sf::st_drop_geometry() %>%
+  filter(split == "test")
+
+
+
+```
+
+```{r}
+#| label: clean-train
+n0 <- nrow(train_df)
+
+train_df <- train_df %>% filter(is_multisale == 0)
+
+tibble(rule = "multi-parcel sales", removed = n0 - nrow(train_df))
+table(train_df$is_multisale)   # should show only 0
+```
+
+```{r}
+predictors20 <- c(
+  "year",                      # factorized
+  "sale_qrt",                  # factorized
+  "is_multisale",
+  "log(building_000sf)",
+  "I(building_000sf^2)",
+  "building_age",
+  "I(building_age^2)",
+  "log1p(lotsize_acre)",
+  "num_bedrooms",              # factorized
+  "num_full_baths",
+  "num_half_baths",            # factorized
+  "num_fireplaces",            # factorized
+  "garage_size",
+  "central_air",
+  "one_story",
+  "full_basement",
+  "finished_basement",
+  "brick_stone_ext",
+  "warmairfurnace",
+  "violentcrime_660ft",
+  "propertycrime_660ft",
+  "edulevelpct",
+  "construction_activity",
+  "downtown_drive_time",
+  "average_distance_to_work",
+  "log(medincomeE)",
+  "nearest_school_rating_math",
+  "distance_to_school_ft"
+)
+
+f20 <- reformulate(termlabels = predictors20, response = "sale_price")
+
+model_log <- model_log %>%
+  add_row(
+    model   = "m27",
+    added   = "933pm",
+    cv_rmse = cv_rmse(f20, train_df),
+    notes   = "with dis to school"
+  )
+
+print(model_log, n = 40)
+```
+
+
+
+
+
+##good one
+```{r}
+```{r}
+predictors19 <- c(
+  "year",                      # factorized using mutate(year = as.factor(year))
+  "sale_qrt",                  # factorized
+  "is_multisale",
+  "log(building_000sf)",
+  "I(building_000sf^2)",
+  "building_age",
+  "I(building_age^2)",
+  "log1p(lotsize_acre)",
+  "num_bedrooms",              # factorized
+  "num_full_baths",
+  "num_half_baths",            # factorized
+  "num_fireplaces",            # factorized
+  "garage_size",
+  "central_air",
+  "one_story",
+  "full_basement",
+  "finished_basement",
+  "brick_stone_ext",
+  "warmairfurnace",
+  "violentcrime_660ft",
+  "propertycrime_660ft",
+  "edulevelpct",
+  "vacantE",
+  "construction_activity",
+  "downtown_drive_time",
+  "average_distance_to_work",
+  "log(medincomeE)",
+  "log1p(owner_occE)",
+  "log1p(tenure_totE)"
+
+
+)
+
+f19 <- reformulate(termlabels = predictors19, response = "sale_price")
+
+model_log <- model_log %>%
+  add_row(
+    model   = "m20",
+    added   = "best",
+    cv_rmse = cv_rmse(f19, train_df),
+    notes   = "xxxx"
+  )
+
+print(model_log, n = 40)

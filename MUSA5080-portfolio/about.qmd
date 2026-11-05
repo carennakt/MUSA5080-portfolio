@@ -1,0 +1,27 @@
+---
+title: "About Me"
+---
+
+## Background
+
+<!-- CHANGE THIS -->
+
+Before joining the MUSA program, I graduated from The George Washington University in Washington D.C. I received a Bachelor of Science in International Affairs and Geography with a minor in Geographic Information Systems. During my undergraduate degree I studied at Queen's University Belfast and Université Paris Dauphine. In Belfast, I developed original research on immigrant integration in post-conflict cities funded by the GW Undergraduate Research Award. In Paris, I expanded my knowledge of immigrant communities in the EU and became proficient in French. Before my bachelors, I received an International Baccalaureate Diploma at the United World College in Maastricht, The Netherlands. 
+
+I am passionate about urban spatial analysis because I believe access to data and productively educating the public with data visualizations is a core pillar of our world. I love cities and learning about the different layers that form a city's unique identity. I hope to gain skills in programming and research methods that can aid in my future workplace or in pursuit of a PhD. 
+
+
+## Skills
+
+<!-- CHANGE THIS: update this through the semester as it becomes true -->
+
+- **Languages & Tools:** R, Quarto, Git
+- **Spatial:**: ArcGIS, GeoDa
+- **Data:** US Census / ACS via `tidycensus`
+
+## Contact
+
+<!-- CHANGE THIS -->
+
+- Email: ckt@upenn.edu
+- GitHub: [@carennakt](https://github.com/carennakt)

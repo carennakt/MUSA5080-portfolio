@@ -1,0 +1,15 @@
+{
+  "hash": "892264f8031dadc8bf3b125fe125185c",
+  "result": {
+    "engine": "knitr",
+    "markdown": "---\ntitle: \"Assignment 2: Who Do We Know the Least About?\"\nsubtitle: \"Measuring uncertainty in American Community Survey data\"\nauthor: \"Carenna Thompson\"\ndate: 2026-09-05\nformat:\n  html:\n    toc: true\n    code-fold: false\nexecute:\n  warning: false\n  message: false\n---\n\n## Setup\n\n\n::: {.cell}\n\n```{.r .cell-code}\nlibrary(tidyverse)\nlibrary(tidycensus)\n```\n:::\n\n\n\nmy_state = \"CA\"\nmy_variable = \"B25064_001\"\n\n# lets find some data\nca_rent <-get_acs(\n  geography = \"county\",\n  variables = \"B25064_001\",\n  state = \"CA\",\n  year = 2023,\n  survey = \"acs5\"\n)\n\n#we can view it like...\n\ndim(ca_rent)\nhead(ca_rent)\n\n#margin of error studies\n\nca_rent = ca_rent %>%\n  mutate(moe_pct = as.numeric(moe) / as.numeric(estimate) * 100)\n \n#lets take a look \n  \nca_rent %>%\n  arrange(desc(moe_pct))%>%\n  select (NAME, estimate, moe, moe_pct) %>%\n  head (10)\n  \nca_rent = ca_rent %>%\n  mutate(reliability = case_when(\n    moe_pct < 5 ~ \"High confidence\",\n    moe_pct < 10 ~ \"Moderate\",\n    TRUE        ~ \"Low confidence\"\n))\ncount(ca_rent, reliability)\n\n## Is the margin of error bigger in small places? go wide\n\n\nca_wide = get_acs (\n  geography = \"county\",\n  variables = c(myvar = \"B25064_001\",\n                pop   = \"B01003_001\"),\n  state = \"CA\",\n  year  = 2023,\n  survey = \"acs5\",\n  output = \"wide\"\n)\nhead(ca_wide)\n\nnames(ca_wide)\n\n\n## lets do it with confidence\n\nca_wide = ca_wide %>%\n  mutate(\n  moe_pct = myvarM / myvarE * 100) %>%\n  mutate(reliability = case_when (\n           moe_pct < 5 ~ \"High confidence\",\n          moe_pct < 15 ~ \"Moderate\", \n          TRUE         ~ \"Low confidence\"\n  \n))\n\n\nca_wide %>%\n  group_by(reliability) %>%\n  summarize(\n  n_counties = n(),\n  avg_population = mean(popE)\n)\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+    "supporting": [],
+    "filters": [
+      "rmarkdown/pagebreak.lua"
+    ],
+    "includes": {},
+    "engineDependencies": {},
+    "preserve": {},
+    "postProcess": true
+  }
+}

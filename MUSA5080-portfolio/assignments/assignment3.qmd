@@ -1,0 +1,355 @@
+---
+title: "Verify the Claim: More D.C. Residents Live in Poverty Than Before the Great Recession, Says Study"
+subtitle: "Testing a published claim about neighborhood change against the data behind it"
+author: "Carenna Thompson"
+date: 2026-09-05
+format:
+  html:
+    toc: True
+    code-fold: True
+    code-summary: "Show code"
+    embed-resources: True
+---
+
+## Part 1
+
+This article references multiple different ways to measure economic disparities in Washington, D.C. and the greater area (the DMV). The headline specifically claims that people in poverty in DC has increased post the 2007-2009 recession. However, the article also references that the data used to analyze the entire population of DC is statistically insignificant. Although the article cites that the whole poverty count may be insignificant, it makes it clear that poverty among the Districts Black and African American residents has increased post recession.
+
+For the purpose of this report, the geographic focus will be on D.C. at the tract level and look into African American (Black) population with an income below the poverty level. The variables used are "B17001B_002" or Black population living below the poverty level in the last 12 months from the ACS5 years 2006-2010 (pre and during the recession) and 2011-2015 (post recession). The article did not provide the exact code, but referencing specifically black poverty aided in deducing the code would be B17001B for "Poverty Status in the last 12 months by Sex and Age (Black or African American)" then adding the 002 to determine the "Total Black or African American individuals with an income below the poverty level". Additionally to get a good comparison of the rest of the population the variable B17001_001 (total people in poverty) to understand the black "share" of the total poverty in DC.
+
+The article references a pre-recession era and calls for data from 2007 and compares it to data in 2015. Although the article references 2007, the better measure would be with ACS5 data spanning 2006-2010 and compare with 2011-2015 on the tract level rather than county due to the stark difference in racial populations east vs west of the Anacostia river (also mentioned in the article).
+
+```{r}
+
+library(tidyverse)
+library(tidycensus)
+library(sf)
+
+options(tigris_use_cache = TRUE)
+
+#api key
+stopifnot(Sys.getenv("CENSUS_API_KEY") != "")
+
+```
+
+```{r}
+#looking for variable
+vars <- load_variables(2010, "acs5")
+View(vars)
+```
+
+```{r}
+dc_tracts2010 <- get_acs(
+  geography = "tract",
+  state     = "DC",
+  variables = c(below_pov   = "B17001B_002",
+                total_pop = "B17001_001"),
+  year         = 2010,
+  output       = "wide",
+  geometry     = TRUE,
+  progress_bar = FALSE
+)
+
+dc_tracts2015 <- get_acs(
+  geography = "tract",
+  state     = "DC",
+  variables = c(below_pov   = "B17001B_002",
+                total_pop = "B17001_001"),
+  year         = 2015,
+  output       = "wide",
+  geometry     = TRUE,
+  progress_bar = FALSE
+)
+
+
+
+```
+
+## Part 2
+
+```{r}
+# reliability for 2010
+dc_tracts2010 <- dc_tracts2010 %>%
+  filter(total_popE > 0) %>%
+  mutate(
+    below_pov_se = below_povM / 1.645,   #below poverty standard error
+    below_pov_cv = (below_pov_se / below_povE) * 100,
+    reliability = case_when(
+      below_pov_cv < 12  ~ "High",
+      below_pov_cv <= 40 ~ "Moderate",
+      TRUE             ~ "Low"
+    )
+  )
+
+```
+
+```{r}
+# test geom
+names(dc_tracts2010)
+
+```
+
+```{r}
+# reliability for 2015
+dc_tracts2015 <- dc_tracts2015 %>%
+  filter(total_popE > 0) %>%
+  mutate(
+    below_pov_se = below_povM / 1.645,   #below poverty standard error
+    below_pov_cv = (below_pov_se / below_povE) * 100,
+    reliability = case_when(
+      below_pov_cv < 12  ~ "High",
+      below_pov_cv <= 40 ~ "Moderate",
+      TRUE             ~ "Low"
+    )
+  )
+
+```
+
+```{r}
+# test geom
+names(dc_tracts2015)
+
+```
+
+#### Figure 1
+
+```{r}
+
+##just to check, get a visual of what we are working with
+#| label: first-map
+ggplot(dc_tracts2010) +
+  geom_sf(aes(fill = below_povE), color = NA) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  labs(title = "Number of African Americans living below the poverty line in DC by Tract, 2010",
+       fill = NULL)
+```
+
+#### Figure 2
+
+```{r}
+
+##just to check, get a visual of what we are working with
+#| label: first-map
+ggplot(dc_tracts2015) +
+  geom_sf(aes(fill = below_povE), color = NA) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  labs(title = "Number of African Americans living below the poverty line in DC by Tract, 2015",
+       fill = NULL)
+```
+
+These maps were used to get a visual understanding of which Census Tracts had data between the two ACS 5-year data sets.
+
+```{r}
+dc_tracts2010 %>%
+  filter(is.na(below_povE)) %>%
+  nrow()
+## There are clear holes in the tracts in DC. The large hole in the middle is the National Mall and the hole in Northwest DC is a water reservoir. Both of these tracks are federal or DC government land that has little to no population living there. 
+
+```
+
+```{r}
+#comparing number of Census tracts between 2010 and 2015
+
+ nrow(dc_tracts2010)
+nrow(dc_tracts2015)
+
+```
+
+```{r}
+dc_tracts2010 = dc_tracts2010 %>%
+  mutate(
+    share = below_povE / total_popE,
+    share_pct = share * 100,
+    share_moe = moe_prop(below_povE, total_popE, below_povM, total_popM)
+  )
+
+
+#compare to 2015/change over time
+
+dc_tracts2015 = dc_tracts2015 %>%
+  mutate(
+    share = below_povE / total_popE,
+    share_pct = share * 100,
+    share_moe = moe_prop(below_povE, total_popE, below_povM, total_popM)
+  )
+```
+
+```{r}
+#drop geom?
+dc_poverty_change = bind_rows(
+  dc_tracts2010 %>% st_drop_geometry() %>% mutate(period = 2010),
+  dc_tracts2015 %>% st_drop_geometry() %>% mutate(period = 2015)
+)
+  
+```
+
+```{r}
+names(dc_poverty_change)
+```
+
+```{r}
+
+dc_poverty_wide = dc_poverty_change %>%
+  select(NAME, period, below_povE, below_povM, below_pov_se, below_pov_cv, share, share_moe, reliability) %>%
+  pivot_wider(
+    names_from  = period,
+    values_from = c(below_povE, below_povM, below_pov_se, below_pov_cv, share, share_moe, reliability)
+  )
+head(dc_poverty_wide)
+```
+
+```{r}
+#computing change
+
+dc_poverty_tested = dc_poverty_wide %>%
+  mutate(
+    change = below_povE_2015 - below_povE_2010,
+    se_1 = below_pov_se_2010,
+    se_2 = below_pov_se_2015,
+    se_diff = sqrt(se_1^2 + se_2^2),
+    moe_diff = se_diff * 1.645,
+    z = change / se_diff,
+    significant = abs(z)> 1.645
+    
+  )
+   
+dc_poverty_tested %>%
+  count(significant)
+
+```
+
+Only 32 census tracts showed statistically detectable change between the two ACS datasets. The other 144 likely had little to no change in black poverty count. As seen in Figure 1 and 2, Figure 1 has clear holes which contribute to the NA status when joining the data sets. Upon examining the metadata, the 4 NA tracts are actually 3 as in 2010 Tract 108 is labeled 108.00 and in 2015 it is just 108, thus the join recognized them as two separate objects. In any case they both show very little reliability. This is likely due to the fact that the tract shows the West End and Foggy Bottom area ([Open Source Data DC](https://opendata.dc.gov/datasets/DCGIS::census-tracts-in-2020/explore?location=38.900118%2C-77.066554%2C13)). This entire tract encompasses The George Washington University and Hospital. While there is a small population of full time residents, it is likely that the data has high noise as many of these people are students who many be miscounted or counted again in their permanent address, likely in other states. Different from the decennial, the ACS takes a sample, so they may not have the exact count of where they are on April 1st like they would on a decennial year. In that same vein, Census Tract 2.01 fully encompasses Georgetown University and Hospital, with the residential part of Georgetown in Census Tract 2.02 and 1.02 ([Open Source Data DC](https://opendata.dc.gov/datasets/DCGIS::census-tracts-in-2020/explore?location=38.900118%2C-77.066554%2C13)). Thus, similar to Census Tract 108, it has little population to sample of full time residents. Lastly, Census Tract 62.2 fully encompasses the primary federal land in the center of DC with buildings like The White House, The Capitol, and cabinet department offices as well as The National Mall ([Open Source Data DC](https://opendata.dc.gov/datasets/DCGIS::census-tracts-in-2020/explore?location=38.900118%2C-77.066554%2C13)). All of which have no full time residents as they are federal buildings and offices.
+
+## Part 3
+
+The article references that a better understanding of black poverty in DC cannot be understood by looking at median income of DC as a total. " 'Looking at the median income for the whole city could wash out some of the differences among socioeconomic groups,' says **Claire Zippel**, an analyst at DCFPI. 'The gains haven’t been equally shared.'" This analysis supports this claim that in order to understand black poverty in DC, an analysis must be made looking at tract level data in specific racial groups. Thus, this analysis supports the claim that the number of Black people living in poverty increased post the 2008 recession. However, the article does not reference places where the number of black people no longer living in poverty also increased. However, the article does reference that higher income black people may have moved out of the District in to nearby wealthy suburbs. This claim goes beyond the scope of the articles data and this analysis but should be examined in future studies.
+
+Another claim that cannot be determined by the referenced variables and data sets in the article is the claim that "Black people are the only racial or ethnic group in the District to experience an increase in the poverty rate since before the recession". The claims goes out of the scope of the data used in the article. While it is true that there was a change in number of people living below the poverty line (especially in Southeast D.C which hosts Ward 7 and 8, shown in Figure 5). Within this analysis and the articles specific reference to only black population in poverty within its visualizations and data, claiming that black people were the only racial group that experienced an increase in poverty with no citation runs out of the scope of this analysis and of the articles claims.
+
+## Part 4
+
+The share of black poverty in proportion to the rest of the population in DC has increased in 18 Census Tracts. An analysis done factoring in a margin of error shows that 32 census tracts had a significant change in Black poverty pre and post recession. The most significant increase in share of black poverty is in Ward 7 and 8, specfically in Census Tracts 75.02 and 77.03 (Figure 3 and 5). However, there were 14 Census Tracts that showed significant change in which the share of black poverty decreased. Most notable decreases were in Census Tracts 47.01 and 71 (Figure 3 and 5). These areas represent the Mt. Vernon Triangle and Navy Yard neighborhoods. While the cause of both increase and decrease in the black share of poverty is not clear, it is worth law makers and officials looking into these Census Tracts to get a more wholistic understanding of factors contributing to black poverty in the nation's capital.
+
+\*\*Please note due to ACS sampling a majority of the tracts received moderate to low data reliability on a Jurjevich et al. (2018) threshold (Figure 4).
+
+#### Figure 3
+
+```{r}
+#| fig-height: 9
+dc_poverty_tested %>%
+  filter(significant) %>%
+  arrange(desc(moe_diff)) %>% 
+  slice_tail(n = 32) %>%
+  mutate(
+    NAME = str_remove(NAME, ", District of Columbia, District of Columbia"),
+    direction = if_else(change > 0, "Increase", "Decrease")) %>%
+    ggplot(aes(x = reorder(NAME, change), y = change))+
+    geom_col(aes(fill = direction)) +
+    scale_fill_manual(values = c("Increase" = "firebrick3", "Decrease" = "midnightblue"),
+                     breaks = c("Increase", "Decrease"))+
+  geom_errorbar(aes(ymin =change - moe_diff,
+                    ymax = change + moe_diff, width = 0.3))+
+    geom_hline(yintercept = 0, linetype = "dashed")+
+    coord_flip()+
+    theme_minimal() +
+  theme(plot.title = element_text(size = 16, face = "bold")) +
+    labs(title = "Statistically significant change in Black Poverty in DC", subtitle = "2006-2010 vs 2011-2015, ACS 5-year estimates", x = NULL, y = "Change in number of Black population living below the poverty line", fill= NULL)
+    
+
+
+```
+
+#### Figure 4
+
+```{r}
+## make reliability table
+
+library(gt)
+
+```
+
+```{r}
+
+reliability_table = dc_poverty_tested %>%
+  mutate(
+    cv = (moe_diff / 1.645) / abs(change) * 100,
+    dot = case_when(
+      cv < 12  ~ "🟢",
+      cv <= 40 ~ "🟡",
+      TRUE     ~ "🔴"
+    ),
+    flag = case_when(
+      cv < 12  ~ "Reliable",
+      cv <= 40 ~ "Somewhat reliable",
+      TRUE     ~ "Unreliable"
+    ),
+    NAME = str_remove(NAME, ", District of Columbia, District of Columbia")
+  ) %>%
+  filter(is.finite(cv)) %>%
+  arrange(desc(cv)) %>%
+  select(dot, NAME, change, moe_diff, cv, flag)
+
+reliability_table %>%
+  gt() %>%
+  fmt_number(columns = c(change, moe_diff), decimals = 0) %>%
+  fmt_number(columns = cv, decimals = 1) %>%
+  cols_label(
+    dot      = "",
+    NAME     = "Tract",
+    change   = "Change",
+    moe_diff = "MOE of change",
+    cv       = "CV (%)",
+    flag     = "Reliability"
+  ) %>%
+  cols_align(align = "center", columns = dot) %>%
+  tab_header(
+    title    = "Reliability of change in Black poverty by DC tract",
+    subtitle = "2006-2010 vs 2011-2015, ACS 5-year estimates, sorted from least to most reliable"
+  ) %>%
+  tab_source_note(
+    "Reliability thresholds follow Jurjevich et al. (2018): 🟢 CV < 12% reliable, 🟡 12-40% somewhat reliable, 🔴 > 40% unreliable. Thresholds are applied to the CV of the change: (MOE of change / 1.645) / |change| x 100."
+  ) %>%
+  tab_source_note(
+    "Source: U.S. Census Bureau, American Community Survey, table B17001B."
+  )
+
+
+```
+
+#### Figure 5
+
+```{r}
+
+# changed the most
+top_change = dc_poverty_tested %>%
+  filter(significant) %>%
+  arrange(desc(abs(change))) %>%
+  slice_head(n = 32)
+```
+
+```{r}
+
+dc_change_map = dc_tracts2015 %>%
+  left_join(dc_poverty_tested %>% select(NAME, change), by = "NAME")   ##dc_tracts 2015 still had the geometry so im usimg it to make the map
+```
+
+```{r}
+
+dc_top_change = dc_change_map %>%
+  filter(NAME %in% top_change$NAME)
+```
+
+```{r}
+
+ggplot(dc_change_map) +
+  geom_sf(aes(fill = change), color = NA) +
+  geom_sf(data = dc_top_change, fill = NA, color = "black") +
+  scale_fill_gradient2(low = "midnightblue", mid = "white", high = "firebrick3") +
+  theme_void() +
+  labs(title = "DC tracts with the significant change in Black poverty",
+       subtitle = "2006-2010 vs 2011-2015, ACS 5-year estimates",
+       fill = "Change",
+       caption = "Black outlines show the 32 tracts with the largest significant change.")
+```

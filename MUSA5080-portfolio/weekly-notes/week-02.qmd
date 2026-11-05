@@ -1,0 +1,42 @@
+---
+title: "Week 2: dplyr and Census"
+description: "table functions and acs data"
+date: 2026-09-04
+---
+
+## What We Did
+
+We had a quiz. Panic. But it turned out fine. 
+
+##Key Concepts
+
+The loop: **Edit --> Save --> Render --> Commit --> Push --> wait *(take a breath*) Refresh --> Enjoy**
+
+
+
+Three places a file can live:
+
+1. **My computer** — where I edit
+2. **GitHub.com** — where it's stored
+3. **My live site** — what the world sees
+
+The loop: **Edit → Save → Render → Commit → Push → wait → refresh**
+
+## Proving R Works
+
+The chunk below runs when this page renders. If you can see a result underneath
+it on your published site, R and Quarto are talking to each other correctly.
+
+```{r}
+sessionInfo()$R.version$version.string
+```
+
+## Reflection
+
+<!-- CHANGE THIS: 3-4 sentences -->
+
+
+
+## Questions I Still Have
+
+

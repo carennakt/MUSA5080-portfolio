@@ -1,0 +1,223 @@
+---
+title: "Assignment 2: Who Do We Know the Least About?"
+subtitle: "Measuring uncertainty in American Community Survey data"
+author: "Carenna Thompson"
+date: 2026-09-05
+format:
+  html:
+    toc: true
+    code-fold: false
+execute:
+  warning: false
+  message: false
+---
+
+
+## Setup
+
+```{r}
+library(tidyverse)
+library(tidycensus)
+```
+
+
+## The question
+
+Every number the American Community Survey publishes is an estimate drawn from a
+sample, not a count. That means every number comes with a margin of error — a
+statement about how wrong it might be.
+
+Most people ignore it. In this assignment, you won't.
+
+
+
+**In this analysis, I look at median gross rent across counties in California, and
+ask which communities we measure most and least reliably.** I am looking at California because I grew up in Sacramento. There are a wide range of counties and rent prices throughout the state so I thought it would be an apt state and variable to look at when measuring reliability. 
+
+---
+
+## Choosing what to measure
+
+
+```{r}
+my_state = "CA"
+my_variable = "B25064_001"
+```
+
+## Pulling the data
+
+```{r}
+# lets find some data
+ca_rent <-get_acs(
+  geography = "county",
+  variables = "B25064_001",
+  state = "CA",
+  year = 2023,
+  survey = "acs5"
+)
+```
+
+Let's look at what came back.
+
+```{r}
+#we can view it like...
+
+dim(ca_rent)
+head(ca_rent)
+```
+
+
+**There are 58 counties in California and my row count matches that.**
+
+---
+
+## How big is the margin of error?
+
+A margin of error of 3,000 means something very different for an estimate of 20,000
+than for an estimate of 200,000. To compare across places, we need it as a
+percentage.
+
+```{r}
+#margin of error studies
+
+ca_rent = ca_rent %>%
+  mutate(moe_pct = as.numeric(moe) / as.numeric(estimate) * 100)
+```
+
+
+Now sort to see which counties are measured least reliably.
+
+```{r}
+#lets take a look 
+  
+ca_rent %>%
+  arrange(desc(moe_pct))%>%
+  select (NAME, estimate, moe, moe_pct) %>%
+  head (20)
+```
+
+
+**Sierra County has the largest margin of error relative to its estimate at 705 MOE to an estimate of 1181. The MOE percent is around 59.7%.**
+
+---
+
+## Sorting counties into reliability categories
+
+```{r}
+ca_rent = ca_rent %>%
+  mutate(reliability = case_when(
+    moe_pct < 5 ~ "High confidence",
+    moe_pct < 15 ~ "Moderate",
+    TRUE        ~ "Low confidence"
+))
+count(ca_rent, reliability)
+```
+
+
+**39 counties fall into the high confidence with a MOE percentage of under 5%. 13 counties fall into the moderate with a MOE percentage of under 10%. 6 counties fall into the low confidence with a MOE percentage above 10%**
+
+---
+
+## Is the margin of error bigger in small places?
+
+To answer this we need population and our variable side by side, in the same row.
+That means a **wide** pull.
+
+```{r}
+ca_wide = get_acs (
+  geography = "county",
+  variables = c(myvar = "B25064_001",
+                pop   = "B01003_001"),
+  state = "CA",
+  year  = 2023,
+  survey = "acs5",
+  output = "wide"
+)
+head(ca_wide)
+```
+
+
+```{r}
+ca_wide = ca_wide %>%
+  mutate(
+  moe_pct = myvarM / myvarE * 100) %>%
+  mutate(reliability = case_when (
+           moe_pct < 5 ~ "High confidence",
+          moe_pct < 15 ~ "Moderate", 
+          TRUE         ~ "Low confidence"
+  
+))
+```
+
+Now compare the average population of counties in each reliability category.
+
+```{r}
+ca_wide %>%
+  group_by(reliability) %>%
+  summarize(
+  n_counties = n(),
+  avg_population = mean(popE)
+)
+```
+
+**The average population in 39 that has a high confidence reliability is 989,118. The table shows reliability decreasing in population with 16 counties having a moderate reliability and an average of 40,430 people and 3 counties having low confidence with an average population of 6,771.  **
+
+---
+
+## What this means for policy
+
+
+**[Sierra, Trinity, and Plumas County have the least reliable data in the ACS. All of these counties have lower populations than the rest of California and host national forests. Sierra county is an outlier from Trinity and Plumas County. While the average population between all of them is around 6,000, both Trinity and Plumas have populations of just below 20,000, whereas Sierra County has a population of around 3,000. Additionally, Trinity and Plumas have MOE percentages of 23.9 and 14.3, respectively. This is vastly different from Sierra County who has a MOE percentage of 59.7. Due to the ACS collecting data via sampling, it is likely that the low population causes less reliability due to the smaller sample size. Low population areas like Sierra County may get less responses to the survey as opposed to high population areas where there may be more people to survey and thus more chances at responses. 
+
+A possible issue that may occur could be when the government uses this gross median rent to determine how much funding is allocated for emergency relief in a disaster. All three of these counties had wildfires in August 2026. Wildfires may cause loss of property, which can affect homeowners and renters. California's emergency relief organization (CALOES) may use the ACS gross median rent data to calculate the amount to give those who are in search of temporary housing or renters who may be receiving rent debt grants. If the ACS data for the gross median rent in these counties are  unreliable this could lead to an underestimate of relief grants leaving those affected by wildfires to take on more financial burdens after a national disaster.]**
+
+---
+
+## Optional challenges - For those craving more
+
+::: {.callout-note}
+## Delete this box
+
+**None of these are graded.** There are no extra points. A complete, well-written assignment earns a 2 either way.
+
+They're here for anyone who finished the above and found it straightforward. Pick
+one (or more) that interests you. 
+
+1. **Propagate the margin of error.** If you compute a derived value — a percentage,
+   a ratio, a sum — its uncertainty depends on the uncertainty of its inputs, and
+   you can't just carry the original MOE along. The Census Bureau publishes formulas
+   for this, and `tidycensus` implements them: `moe_sum()`, `moe_prop()`,
+   `moe_ratio()`. Compute something derived, and get its margin of error right.
+
+2. **Parameterize the report.** Add `params:` to the YAML so the state is an input
+   rather than hard-coded, and the same file regenerates for any state. Render it
+   from the terminal with `quarto render assignment2.qmd -P state:NY`.
+
+3. **Write a function and iterate.** Wrap the data pull in a function, then use
+   `purrr::map_dfr()` to run it across several states at once. Does the
+   small-places-are-noisier pattern hold everywhere, or are some states different?
+
+4. **Change the geographic scale.** Run the same variable at `geography = "tract"`
+   inside one county. Compare the margins of error to what you saw at county level.
+   What does that imply about the resolution at which you can actually trust ACS
+   data?
+
+If you try one, add a short section describing what you did and what you found.
+:::
+
+---
+
+## Before you submit
+
+::: {.callout-note}
+## Delete this box — checklist
+
+- [ ] Your name is in the YAML header
+- [ ] Every instruction callout is deleted
+- [ ] Every `[bracketed prompt]` is replaced with your own writing
+- [ ] No `___` blanks remain anywhere
+- [ ] The file is at `assignments/assignment2.qmd`
+- [ ] **Session → Restart R**, then render the whole project. It works.
+- [ ] Committed and pushed
+- [ ] You opened your live site and looked at the published page
+:::

@@ -1,0 +1,191 @@
+---
+title: "Week 4"
+description: "t--"
+date: 2026-09-18
+---
+
+## Week 3 Review
+
+Census uses a 90% interval
+
+you can take the difference in the actual variable but then you need to determine the uncertainty around the difference because of the different MOEs
+
+Calculate SE (standard error)
+
+MOE/1.645
+
+so ex MOE 2015 = 3
+
+3/1.654 =
+
+then at the end of the huge equation you as is that \# less than or equal to 1.645
+
+if it is less than 1.645 then there is too much sampling noise for it to be completely accurate
+
+if you have really noisy data you can aggregate – use a bigger geography (go from tracts to counties)
+
+you can also merge census tracts – usually because not a lot of people live there
+
+sum_MOE equation
+
+## Week 4
+
+### Joining Tables
+
+| GEOID | med_inc23 |
+|-------|-----------|
+| 100   | \$82000   |
+| 200   | \$31500   |
+| 300   | \$45000   |
+
+| GEOID | med_inc15 |
+|-------|-----------|
+| 100   | \$61000   |
+| 200   | \$27000   |
+| 400   | \$39000   |
+
+------------\>
+
+| GEOID | 2023  | 2015  | geometry              |
+|-------|-------|-------|-----------------------|
+| 100   | 82000 | 61000 | POLYGON (coordinates) |
+| 200   | 31500 | 27000 |                       |
+| 300   | 45000 | n/a   |                       |
+
+must join by a key – in this case GEOID
+
+the keys in both data sets must be the same type
+
+``` r
+left.join (income23, income15, by = "GEOID")
+```
+
+300 doesnt have a a 2015 variable so no join just null – 400 wasnt in the join just the new table so no join
+
+Full Join (all)
+
+left join (above)
+
+inner join (just where they intersect)
+
+------------------------------------------------------------------------
+
+``` r
+get_acs(....., geometry = TRUE)
+```
+
+the geometry column is "sticky" will go with all the data
+
+spatial data in R
+
+- sf (simple features)
+
+- shp and gdb only in Arc
+
+### Coordinate Reference Systems (CRS)
+
++------------+--------------------------------------------------+
+| geographic | projected                                        |
++============+==================================================+
+| in degrees | State Plane units: ft or meters                  |
+|            |                                                  |
+|            | - Philly we use State Plane South (EPSG 2272)    |
+|            |                                                  |
+|            | States like CA use UTM because there are 5 zones |
+|            |                                                  |
+|            | All of US                                        |
+|            |                                                  |
+|            | - Albers Equal Area EPSG 5070                    |
+|            |                                                  |
+|            | - WGS-84 (EPSG 4326)                             |
++------------+--------------------------------------------------+
+|            |                                                  |
++------------+--------------------------------------------------+
+
+- geographic (sphere) in degrees
+
+- ellipsoids dont fit in all places thus we use some for some places
+
+- different ones have different places where they are perfectly inline (ex Clarke with Meades Ranch, KS)
+
+- then we put it into long lat
+
+- this made the North American Datum of 1927 — NAD27
+
+- we use NAD83 or GRS-80
+
+- WGS84 – earth centered like the rest but better for global – GPS standard
+
+WE WANT CRS than we can recognize (ft or meters)
+
+- projection – starts off with a 3D model then puts it in a tube that tube unfolds into 2D (i.e. Mercator)
+
+- Cylindrical (tube upwards), transverse cylindrical (tube horizontal), Conic (cone shaped - good for Russia, US, Canada, etc), Planar (kinda traces it – good for Australia or islands)
+
+things projections can do
+
+- shapes (conformal conic) keeps the shape of something accurate
+
+- areas (equal area)
+
+- distances (equal distant)
+
+- direction (mercator i guess :/)
+
+projected coordinate systems are only good for local mapping
+
+#### Changing the coordinate system
+
+lets say you get a geometry with no label you can use
+
+``` r
+st_set.crs()  ## adding the correct label, only do this if it is missing or wrong, if you just want to change it do transform 
+
+st_set.crs(epsg = 4326)
+
+st_transform()  ## changing the actual coordinate system 
+
+st_transform(espg = 4326)
+
+st.crs('data')      ## good practice is to do this to find out what we are in then
+st_transform('data', 4326)
+```
+
+lets say you want to draw a 500 meter buffer around the station
+
+``` r
+st_buffer('stations', 500)
+```
+
+it will do this 500 buffer in the units the data is projected in so you have to math it to be in the right units
+
+to figure it out you load a base map or other map in the correct coordinate system and see if they match
+
+st is all spatial anytime u wanna do spatial
+
+A B
+
+------------------------------ \| ——————————–\|
+
+C \| \|
+
+------ \| \|
+
+|                 | A,B | A,C | A,A |
+|-----------------|-----|-----|-----|
+| st_intersects() | T   | T   | T   |
+| st_touches()    | T   | F   | F   |
+| st_within()     | F   | T   | F   |
+
+How many tracts near 1/2 mile from indego bike station
+
+``` r
+st_filter()           ##count the tracts 
+st_intersection()     ## creates new polygons everytime they intersect and are common shapes
+
+st_union()          ## everything
+st_join()           ## join by a spatial location 
+
+st_join('stations','tracts')         ##assigns the tract attributes to the station 
+st_distance()                         ## returns a matrix with the distance between all of the stations and the tracts 
+```

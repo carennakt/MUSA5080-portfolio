@@ -1,0 +1,98 @@
+---
+title: "Week 1: Getting Set Up"
+description: "First impressions, and getting the workflow running."
+date: 2026-08-28
+---
+
+## What We Did
+
+<!-- CHANGE THIS: replace with your own notes -->
+
+What is a Website?
+
+  a. a folder of html files + a computer that is   always on
+  b. we are going to be using Quarto + GitHub
+
+What is Quarto?
+  a.makes .qmd files that you write → magic       quarto machine →   html files
+  b.magic is made by clicking render
+  c.what happens in the machine —
+      1. reads the file from top to bottom
+      2. finds the code chunks
+      3. sends them to R, gets results 
+      4. glues the text + the results into html
+  d. if there is an error the magic does not          happen
+Anatomy of a .qmd
+
+Files + Folders
+  a. Who is this file for?
+  b.For me files vs For the machine
+
+For me
+  index.qmd
+  about.qmd
+  weekly_notes/*.qmd
+  assignments/*.qmd
+For machine
+  _quarto.yml (settings for the whole website)
+  _freeze/   (for quarto after it gets rendered **Do not touch**)
+  .Rproj → Rstudio
+  .gitignore → Github
+  .renviron → R (secrets)
+  docs/  → the internet i.e. where your website     lives
+
+“Index”
+  a. website rule: ask for a folder, you get     that folder index.html
+  b. carennakt.github.io/  → docs/index.html
+ /weekly-notes → docs/weekly.notes/index.html
+
+GIT/GitHub.com/GitHub desktop
+  a. GIT is a version tracker, invisible, runs    on your computer
+    i. commit → “save a labeled snapshot” (lives       on your computer)
+    ii. push → “send my snapshot to GitHub.com”
+  b.GitHub.com is a website that stores a copy    of your folder   c.GitHub desktop are buttons   that tell GIT what to do 
+  
+.Rscript
+  a. code only
+  b.sandbox
+  c.good for working out the problems,              experimenting, sketch   book 
+  d. In console you can run stuff real quick but     it doesnt save repository is like a larger      folder that you wanna share w the world on      github
+
+Workflow
+  a. everyweek you will download a .qmd file and     put it into   assignments along w some data 
+  b.make sure to have highlighted your index.qmd
+  c.when you are rendering you want to click on   index when you press render 
+  d.commit is different from saving – commit      saves since the last time you committed then    you push it to github.com
+  e.C:\Users\caren\Downloads\PPA\MUSA-5080-portf   olio
+
+## Key Concepts
+
+Three places a file can live:
+
+1. **My computer** — where I edit
+2. **GitHub.com** — where it's stored
+3. **My live site** — what the world sees
+
+The loop: **Edit → Save → Render → Commit → Push → wait → refresh**
+
+## Proving R Works
+
+The chunk below runs when this page renders. If you can see a result underneath
+it on your published site, R and Quarto are talking to each other correctly.
+
+```{r}
+sessionInfo()$R.version$version.string
+```
+
+## Reflection
+
+<!-- CHANGE THIS: 3-4 sentences -->
+
+What I want out of this course: I do not have a good understanding of R, but I already feel like I am learning so much! I would love to learn how to make visualizations that have to do with my research interests. I would also like to learn the nessesary work flow from idea to execution of a project as it relates to governance and urban issues. 
+
+One thing I'm nervous about: Since I do not have a lot of experience in programming I am nervous for when it gets a little more complicated and the chaos. But also looking forward to the problem solving as I learn the best by making mistakes.
+
+## Questions I Still Have
+
+-how do I change the fonts/theme of my portfolio?
+-looking up now how to add images but tbd if I will figure it out before class on Friday. 

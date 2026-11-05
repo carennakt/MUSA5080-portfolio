@@ -1,0 +1,132 @@
+---
+title: "Week 5"
+description: "---"
+date: 2026-09-18
+---
+
+## Week 4 Review
+
+## Week 5
+
+| GEOID | med_rent | med_inc | pct_renters | pct_ba | n.stations | rent_cv | geometry      |
+|-------|----------|---------|-------------|--------|------------|---------|---------------|
+| 100   | 1650     | 82000   | 0.71        | 0.64   | 3          | 9.8     | (coordinates) |
+|       |          |         |             |        |            |         |               |
+|       |          |         |             |        |            |         |               |
+
+Where does rent exceed our expectations?
+
+\$30,000 –\> rent \$800
+
+\$100,000 –\> rent \$3,000
+
+Y = f(x) + E
+
+Y = rent
+
+f(x) = function is unknown
+
+E = everything else
+
+scale of deep learning
+
+rigid ———————————————————————————————- flexible
+
+linear –lasso/ridge – logistic regression-regression trees -random forest-boosting-neural networks
+
+Parametric is to follow some linear line vs non parametric which has little
+
+looking at the R squared can tell us how much variability the model accounts for
+
+The Line
+
+1.  points are observed
+2.  line is predicted (y hat)
+3.  the space between them is the residual
+4.  Least Squares
+    1.  figures out all of the errors
+    2.  want to minimize the sum of **squared** errors
+
+M1 = lm (med_rent \~ med_inc, data = tracts)
+
+summary (m1)
+
+(Intercept)
+
+med_inc
+
+|            | estimate | S.E.   | t-value | p-value  |
+|------------|----------|--------|---------|----------|
+| intercept  | 690.0    | 38.0   | 18.2    | \< 2e-16 |
+| med_income | 0.0081   | 0.0005 | 16.2    | \< 2e-16 |
+|            |          |        |         |          |
+
+ex. the intercept is \$690 which means its the price of rent when the income of \$0
+
+if the table is in 10k you'd have to multiply it by 10k so 0.0081 \* 10k = \$81
+
+for every 10k increase we can expect income to go up by \$81
+
+when you have noisy data it affects the ability to predict
+
+- noise in Y goes into the residuals – we are only able to predict systematic variation (not noise)
+
+- noise in X – flattens the slope
+
+Fit vs. Prediction
+
+r\^2 calculated on the data it was fit to
+
+Test\\Train
+
+80% Training
+
+20% Test
+
+In testing
+
+\$19,000 — rent is \$500 – real rent is \$400 — \$500 - 400 = 100\^2
+
+\$29,000 — rent is \$900 — real rent is \$1200 — \$900 - \$1200 = 300\^2
+
+Calculate the RMSE (Root Mean Square Error) –\> Lower is Better
+
+New CV – Cross Variation
+
+K-fold – dumb way of saying you split up the data
+
+lets say we have 100 records
+
+| 1 (test) | 2   | 3   | 4   | 5   |
+|----------|-----|-----|-----|-----|
+| 20       | 20  | 20  | 20  | 20  |
+
+take the first 20 then train with the rest of it
+
+test - how well that line can predict rents based on the unseen data – come up with RMSE
+
+| 1   | 2 (test) | 3   | 4   | 5   |
+|-----|----------|-----|-----|-----|
+|     |          |     |     |     |
+
+do the same thing for the next group or fold
+
+Average the RMSE with the others
+
+K can be any number of folds
+
+Overfiting – when the line is exactly with the model is bad because it learns the noise
+
+How to pick features
+
+- what happens when you have multicollinearity – bad things in inference but round here could be fine
+
+Homeosedastic
+
+- random
+
+Heterosedastic
+
+- have patterns
+
+- 

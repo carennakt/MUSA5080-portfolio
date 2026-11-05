@@ -1,0 +1,634 @@
+---
+title: "Assignment 4: Building Features, Watching What Happens"
+subtitle: "MUSA 5080 · Integrates Weeks 1–5 · Due Friday, October 16"
+author: "Carenna Thompson"
+format:
+  html:
+    toc: true
+    code-fold: show
+    code-tools: true
+execute:
+  warning: false
+  message: false
+freeze: false
+---
+
+## Part 0: Setup
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(caret)
+
+Sys.getenv("CENSUS_API_KEY") != ""  
+
+## log-start
+model_log <- tibble(
+  model   = character(),
+  added   = character(),
+  cv_rmse = numeric(),
+  notes   = character()
+)
+```
+
+```{r}
+#| label: cv-helper
+ctrl <- trainControl(method = "cv", number = 10)
+
+cv_rmse <- function(formula, data) {
+  df <- if (inherits(data, "sf")) st_drop_geometry(data) else data
+  vars <- all.vars(formula)
+  bad <- vars[sapply(vars, function(v) any(is.na(df[[v]])))]
+  if (length(bad) > 0) {
+    stop("These variables have NAs: ", paste(bad, collapse = ", "),
+         ". Fill them or choose another variable (Rule 1: don't drop rows).")
+  }
+  set.seed(5080)
+  fit <- train(formula, data = df, method = "lm", trControl = ctrl)
+  fit$results$RMSE
+}
+```
+
+## Part 1: Choose your outcome
+
+This report will examine the number of households that are experiencing rent burden.
+
+```{r}
+philly_tracts <- get_acs(
+  geography = "tract",
+  state = "PA",
+  county = "Philadelphia",
+  variables = c(
+    total_pop = "B01003_001",
+    rent_tot = "B25070_001",
+    rent_none = "B25070_011",
+    rent_burd30 ="B25070_007",
+    rent_burd35 = "B25070_008",
+    rent_burd40 = "B25070_009",
+    rent_burd50 = "B25070_010", #this is 50% or more, severely burdened
+    age =  "B01002_001",
+    hh_tot = "B11005_001",                    #for single parent household
+    male_single_parent = "B11005_006",
+    female_single_parent = "B11005_007",
+    nat_tot = "B05012_001",
+    immigrant_pop = "B05012_003",
+    ins_tot = "B27011_001",
+    uninsured = "B27011_008",
+    lang_tot = "B16001_001",
+    lim_engl_ch = "B16001_023", #chinese speaking, speak english less than very well
+    lim_engl_sp = "B16001_005" #spanish speaking, speak english less than very well
+   ),
+  year = 2023,
+  output = "wide",
+  geometry = TRUE,
+  progress_bar = FALSE
+) %>%
+  st_transform(2272)
+ 
+```
+
+```{r}
+#rent burden math 
+
+philly_tracts = philly_tracts %>%
+  mutate(
+    rent_den = rent_totE - rent_noneE,
+    rent_den_moe = sqrt(rent_totM^2 + rent_noneM^2),
+    
+    rb_num = rent_burd30E + rent_burd35E + rent_burd40E + rent_burd50E,
+    rb_num_moe = sqrt(rent_burd30M^2 + rent_burd35M^2 + rent_burd40M^2 + rent_burd50M^2),
+    y = rb_num / rent_den * 100,
+    y_moe = moe_prop(rb_num, rent_den, rb_num_moe, rent_den_moe) * 100,
+    y_cv = (y_moe/1.645)/ y * 100
+
+  )
+```
+
+```{r}
+#is it reliable before i math the predictors 
+
+#do exist
+sum(is.na(philly_tracts$y))
+
+#how reliable
+summary(philly_tracts$y_cv)
+
+philly_tracts %>%
+  mutate(reliability = case_when(
+    y_cv < 12  ~ "High",
+    y_cv <= 40 ~ "Moderate",
+    TRUE       ~ "Low"
+  )) %>%
+  st_drop_geometry() %>%
+  count(reliability)
+
+#distribution
+ggplot(philly_tracts, aes(x = y)) +
+  geom_histogram(bins = 30) +
+  theme_minimal()
+
+
+```
+
+The outcome I am interpreting is the percentage of households experiencing rent burden which can be defined as 30% or more of their income goes to rent. A number of different agencies look into rent burden. Federal Agencies like Federal Reserve Bank of Philadelphia that specifically has a Rental Housing Affordability data tool and US HUD which uses rent burden as a metric if where the country is at economically. Local organizations like Office of Homeless Services and Philadelphia Housing Development Corporation would use this to identify areas and populations that may benefit from emergency or monthly rent subsidies. The outcome is moderately reliable with 327 tracts in moderate reliability, 22 in high reliability, and 59 in low reliability.
+
+```{r}
+
+#normalize predictors
+philly_tracts = philly_tracts %>%
+  mutate(
+    pct_single_parent = (male_single_parentE + female_single_parentE)/ hh_totE * 100,
+    pct_immigrant = immigrant_popE / nat_totE * 100,
+    pct_uninsured = uninsuredE / ins_totE * 100,
+    pct_lim_engl = (lim_engl_spE + lim_engl_chE)/ lang_totE * 100,
+    med_age = ageE
+  )
+
+
+
+
+```
+
+```{r}
+#| label: filter
+tracts <- philly_tracts %>%
+  filter(total_popE > 0,
+         !is.na(y),
+         !is.na(med_age),
+         !is.na(pct_single_parent),
+         !is.na(pct_immigrant),
+         !is.na(pct_uninsured),
+         !is.na(pct_lim_engl)
+
+         )
+
+nrow(philly_tracts)
+nrow(tracts)
+```
+
+I lost a tract in every aspect of the filter, thus I am going to remove the limited English predictor. This is likely because this variable may be hard to measure or many people do not want to admit to having limited English proficiency given the last 10 years of politics. I would love to look into this variable more at a later date. For now, we go on without it to run this analysis
+
+```{r}
+
+tracts <- philly_tracts %>%
+  filter(total_popE > 0,
+         !is.na(y),
+         !is.na(med_age),
+         !is.na(pct_single_parent),
+         !is.na(pct_immigrant),
+         !is.na(pct_uninsured),
+         
+         )
+
+nrow(philly_tracts)
+nrow(tracts)
+```
+
+After removing limited English proficiency, the tracts I am able to use went up to 387. This means I lost 21 tracts. Upon examining the areas I lost (Figure 1), many areas in the most Southern part of Philadelphia were lost likely due to the Navy Yard and Stadium districts which may have little to no households as well as a portion of Far Northeast that is home to Northeast Airport. Lastly, the rest of the tracts I lost were areas with large recreational or park areas like Fairmount Park, Overbrook Park, and Pennypack Park likely because they are recreational spaces with little to no residents or renters.
+
+```{r}
+lost <- philly_tracts %>% filter(!GEOID %in% tracts$GEOID)
+
+ggplot() +
+  geom_sf(data = philly_tracts, fill = "grey90", color = "white", linewidth = 0.1) +
+  geom_sf(data = lost, fill = "darkred", color = "white", linewidth = 0.1) +
+  theme_void() +
+  labs(title = "Figure 1: Tracts dropped from the model",
+       subtitle = paste(nrow(lost), "of", nrow(philly_tracts), "tracts removed"))
+```
+
+## Part 2: Baseline model
+
+### 2A: Look first
+
+Predictor: Single parent households
+
+```{r}
+ggplot(tracts, aes(x = pct_single_parent, y = y))+
+    geom_point(alpha = 0.5) + 
+    geom_smooth(method = "lm", se = FALSE, color = "orangered2") + 
+    theme_minimal() + 
+    theme(plot.title = element_text(size = 16, face = "bold")) + 
+    labs(title = "Figure 2: Rent burden vs. single-parent households", subtitle = "2019-2023 ACS 5-year estimates", x = "% single-parent households", y = "% renters paying 30%+ of income on rent")
+```
+
+Predictor: Median Age
+
+```{r}
+ggplot(tracts, aes(x = med_age, y = y))+
+    geom_point(alpha = 0.5) + 
+    geom_smooth(method = "lm", se = FALSE, color = "darkgoldenrod2") + 
+    theme_minimal() + 
+    theme(plot.title = element_text(size = 16, face = "bold")) + 
+    labs(title = "Figure 3: Rent burden vs. Median Age", subtitle = "2019-2023 ACS 5-year estimates", x = "median age", y = "% renters paying 30%+ of income on rent")
+```
+
+Predictor: Percent immigrant
+
+```{r}
+ggplot(tracts, aes(x = pct_immigrant, y = y))+
+    geom_point(alpha = 0.5) + 
+    geom_smooth(method = "lm", se = FALSE, color = "chartreuse2") + 
+    theme_minimal() + 
+    theme(plot.title = element_text(size = 16, face = "bold")) + 
+    labs(title = "Figure 4: Rent burden vs. Percent Immigrant", subtitle = "2019-2023 ACS 5-year estimates", x = "% foreign born", y = "% renters paying 30%+ of income on rent")
+```
+
+Predictor: Percent Uninsured
+
+```{r}
+ggplot(tracts, aes(x = pct_uninsured, y = y))+
+    geom_point(alpha = 0.5) + 
+    geom_smooth(method = "lm", se = FALSE, color = "cornflowerblue") + 
+    theme_minimal() + 
+    theme(plot.title = element_text(size = 16, face = "bold")) + 
+    labs(title = "Figure 5: Rent burden vs. Uninsured status", subtitle = "2019-2023 ACS 5-year estimates", x = "% people uninsured", y = "% renters paying 30%+ of income on rent")
+```
+
+### 2B: Fit and log
+
+```{r}
+f1 = y ~ pct_single_parent + pct_immigrant + pct_uninsured + med_age 
+
+m1 = lm(f1, data = tracts)
+summary(m1)
+
+model_log = model_log %>%
+  add_row(model = "m1", added = "ACS baseline",
+          cv_rmse = cv_rmse(f1, tracts),
+          notes = "4 ACS Predictors: Single Parent, Immigrant, Uninsured, and Age")
+model_log
+```
+
+On tracts it hasn't seen, the baseline model misses by about 16.37%.
+
+### 2C: Where is the baseline wrong?
+
+```{r}
+
+tracts = tracts %>% mutate(resid_m1 = residuals(m1))
+
+ggplot(tracts) +
+  geom_sf(aes(fill = resid_m1), color = NA) +
+  scale_fill_gradient2(low = "#2166ac", mid = "grey95", high = "#b2182b", midpoint = 0) +
+  theme_void() +
+  theme(plot.title = element_text(size = 16, face = "bold"))+
+  labs(title = "Figure 6: Baseline model: Where it's wrong",
+       subtitle = "Red = actual higher than predicted",
+       fill = "Residual")
+
+```
+
+There is clustering of high negative residuals in the City Center and Old City meaning that the model is over predicting. This means that the rent burden is actually lower than what the model predicts. This result may be due to higher income renters living in Center City. In other blue areas, it could be possible that public housing programs are implemented in which subsided rent can stay low, meaning burden is also low.
+
+Additionally there is red clustering in Far Northeast Philadelphia and parts of West Philadelphia, meaning there is high positive residuals and the model is under predicting in these areas. This result is likely due to variables not included in my model, like students paying market rent with little to no income, new development in neighborhoods like Fishtown which may out pace incomes.
+
+For part 3 I want to look at rental building licenses and access to grocery stores.
+
+## Part 3: Getting data from Philadelphia's open data portal
+
+Carto
+
+```{r}
+
+carto_get <- function(sql) {
+  url <- paste0("https://phl.carto.com/api/v2/sql?format=GeoJSON&q=", URLencode(sql))
+  st_read(url, quiet = TRUE)
+}
+
+```
+
+```{r}
+#just need to see what im workin with
+
+url <- paste0("https://phl.carto.com/api/v2/sql?format=csv&q=",
+              URLencode("SELECT * FROM li_business_licenses LIMIT 20"))
+
+peek_lic <- read_csv(url)
+names(peek_lic)
+
+```
+
+```{r}
+
+rent_dev = carto_get(
+  "SELECT the_geom, licensetype, censustract, initialissuedate, revenuecode
+   FROM li_business_licenses
+   WHERE initialissuedate >= '2019-01-01' AND initialissuedate < '2024-01-01' 
+   AND revenuecode = '3202'"
+) %>%
+  st_transform(st_crs(tracts))   
+
+nrow(rent_dev)
+
+```
+
+```{r}
+#| label: my-layers-food
+foodretail <- st_read("https://services.arcgis.com/fLeGjb7u4uXqeF9q/arcgis/rest/services/NeighborhoodFoodRetail/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson",
+                       quiet = TRUE) %>%
+  st_transform(st_crs(tracts))    # ArcGIS returns EPSG 4326; translate immediately
+
+nrow(foodretail)
+names(foodretail)
+```
+
+These two layers that I do added that where not covered in my ACS predictors are rental building licenses and food retail. The most direct variable from Carto is rental licenses as in building permits to build new rental apartments and developments. The idea is that where there is more new rental homes being built the more expensive the area may be due to new development. I added grocery stores as I have noticed in my neighborhood there are not a lot of places to get fresh food. While this is not a direct contributor to rent burden, many areas that lack proper access to fresh groceries tend to be areas with lower development.
+
+## Part 4: Building spatial features
+
+### 4A: Counting
+
+```{r}
+tracts <- tracts %>%
+  mutate(n_rent_dev = lengths(st_intersects(., rent_dev)))
+
+summary(tracts$n_rent_dev)
+
+```
+
+Because I used an API key, I have to make all the numbers points before I can count them in Census Tracts.
+
+```{r}
+#| label: count
+food_pts <- foodretail %>%
+  st_centroid()
+
+tracts <- tracts %>%
+  mutate(n_hpss = sapply(st_intersects(., food_pts),
+                         function(i) sum(food_pts$total_hpss[i], na.rm = TRUE)))
+
+summary(tracts$n_hpss)
+```
+
+### 4B: Density
+
+```{r}
+
+tracts <- tracts %>%
+  mutate(
+    area_sqmi         = as.numeric(st_area(.)) / 27878400,   
+    rentdev_per_sqmi = n_rent_dev / area_sqmi,
+    rentdev_per_1k   = n_rent_dev / total_popE * 1000
+  )
+```
+
+```{r}
+
+tracts <- tracts %>%
+  mutate(
+    area_sqmi         = as.numeric(st_area(.)) / 27878400,   
+    hpss_per_sqmi = n_hpss / area_sqmi,
+    hpss_per_1k   = n_hpss / total_popE * 1000
+  )
+```
+
+### 4C: Measuring distance to the nearest thing
+
+Indego stations
+
+```{r}
+stations <- st_read("https://www.rideindego.com/stations/json/", quiet = TRUE) %>%
+  st_transform(st_crs(tracts))
+
+tract_pts <- st_point_on_surface(tracts)   # always inside the tract, unlike a centroid
+
+nearest_idx <- st_nearest_feature(tract_pts, stations)
+
+tracts <- tracts %>%
+  mutate(dist_station_mi = as.numeric(
+    st_distance(tract_pts, stations[nearest_idx, ], by_element = TRUE)) / 5280)
+```
+
+### 4D: Measuring distance to one place
+
+Distance to city hall
+
+```{r}
+city_hall <- st_sfc(st_point(c(-75.1636, 39.9526)), crs = 4326) %>%
+  st_transform(st_crs(tracts))
+
+tracts <- tracts %>%
+  mutate(dist_ch_mi = as.numeric(st_distance(tract_pts, city_hall)) / 5280)
+```
+
+```{r}
+
+tract_pts = st_point_on_surface(tracts)
+
+nearest_rentdev = st_nearest_feature(tract_pts, rent_dev)
+
+tracts <- tracts %>%
+  mutate(dist_rent_dev_mi = as.numeric(
+    st_distance(tract_pts, rent_dev[nearest_rentdev, ], by_element = TRUE)) / 5280)
+
+summary(tracts$dist_rent_dev_mi)
+```
+
+```{r}
+
+hpss_pts = food_pts 
+
+tract_pts = st_point_on_surface(tracts)
+
+nearest_hpss = st_nearest_feature(tract_pts, hpss_pts)
+
+tracts <- tracts %>%
+  mutate(dist_hpss = as.numeric(
+    st_distance(tract_pts, hpss_pts[nearest_hpss, ], by_element = TRUE)) / 5280)
+
+summary(tracts$dist_hpss)
+```
+
+### 4E: Your turn
+
+```{r}
+
+
+tracts = tracts %>%
+  mutate(rentdev_per_sqmi = n_rent_dev/area_sqmi)
+
+f2 = y ~ pct_single_parent + pct_immigrant + pct_uninsured + med_age + rentdev_per_sqmi 
+
+model_log = model_log %>%
+  add_row(model = "m2", added = "rental license density",
+          cv_rmse = cv_rmse(f2, tracts),
+          notes= "density of rental licenses issued 2019-2023")
+
+f3 <- y ~ pct_single_parent + pct_immigrant + pct_uninsured + med_age  + n_hpss
+
+model_log <- model_log %>%
+  add_row(model = "m3", added = "high-produce store count",
+          cv_rmse = cv_rmse(f3, tracts),
+          notes = "sum of high-produce supply stores in tract")
+
+f4 <- y ~ pct_single_parent + pct_immigrant + pct_uninsured + med_age + dist_hpss
+
+model_log <- model_log %>%
+  add_row(model = "m4", added = "distance to high-produce store",
+          cv_rmse = cv_rmse(f4, tracts),
+          notes = "miles to nearest block group with a high-produce store")
+
+
+f5 <- y ~ pct_single_parent + pct_immigrant + pct_uninsured + med_age + dist_ch_mi
+
+model_log <- model_log %>%
+  add_row(model = "m5", added = "distance to City Hall",
+          cv_rmse = cv_rmse(f5, tracts),
+          notes = "miles to City Hall")
+
+model_log
+
+```
+
+The best RMSE that came out of this was distance to City Hall as that lowered the RMSE to 16.3 from the baseline 16.37. This is likely because City Hall has high rent prices and including it as a factor in the model aids in predicting rent burdened areas. The other variables did not change as much with the count of grocery stores in second place for aiding prediction and the distance to grocery stores and rental license density increased the RMSE possibly adding more noise to the model.
+
+## Part 5: Transforming features
+
+### 5A: Logs, for skewed predictors
+
+```{r}
+ggplot(tracts, aes(x = rentdev_per_sqmi)) + geom_histogram(bins = 30) + theme_minimal()
+ggplot(tracts, aes(x = log1p(rentdev_per_sqmi))) + geom_histogram(bins = 30) + theme_minimal()
+
+```
+
+```{r}
+m_sq <- lm(y ~ dist_ch_mi + I(dist_ch_mi^2), data = tracts)
+summary(m_sq)
+```
+
+```{r}
+ggplot(tracts, aes(x = dist_ch_mi, y = y)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2), se = FALSE, color = "red") +
+  theme_minimal()
+
+```
+
+### 5C: Categorical variables
+
+```{r}
+tracts <- tracts %>%
+  mutate(
+    ring = case_when(
+      dist_ch_mi < 2 ~ "Core",
+      dist_ch_mi < 5 ~ "Inner",
+      TRUE           ~ "Outer"
+    ),
+    ring = factor(ring, levels = c("Core", "Inner", "Outer"))
+  )
+
+tracts %>% st_drop_geometry() %>% count(ring)
+
+m_cat <- lm(y ~ ring, data = tracts)
+summary(m_cat)
+```
+
+```{r}
+#log - rental density
+f_log <- y ~ pct_single_parent + pct_immigrant + pct_uninsured + med_age + log1p(rentdev_per_sqmi)
+
+model_log <- model_log %>%
+  add_row(model = "m6", added = "log of rental license density",
+          cv_rmse = cv_rmse(f_log, tracts),
+          notes = "replaced raw density with log1p; histogram was right-skewed")
+
+#squared
+f_sq <- y ~ pct_single_parent + pct_immigrant + pct_uninsured + med_age + I(dist_hpss^2)
+
+model_log <- model_log %>%
+  add_row(model = "m7", added = "squared distance to high-produce store",
+          cv_rmse = cv_rmse(f_sq, tracts),
+          notes = "lets the distance effect curve")
+#categorical
+tracts <- tracts %>%
+  mutate(hpss_cat = case_when(
+    n_hpss <= 6  ~ "Low",
+    n_hpss <= 11 ~ "Moderate",
+    TRUE         ~ "Higher"
+  ),
+  hpss_cat = factor(hpss_cat, levels = c("Low", "Moderate", "Higher")))
+
+f_cat <- y ~ pct_single_parent + pct_immigrant + pct_uninsured + med_age + hpss_cat
+
+model_log <- model_log %>%
+  add_row(model = "m8", added = "food store access category",
+          cv_rmse = cv_rmse(f_cat, tracts),
+          notes = "replaced store count with None/Low/Higher groups")
+
+model_log
+
+```
+
+```{r}
+m_cat <- lm(f_cat, data = tracts)
+summary(m_cat)
+
+```
+
+Log of rental license density is much better than the baseline. For the categorical section and interpreting coefficients, holding the other variables constant, tracts in the Higher food store access group have a rent burden rate about 2.5 percentage points lower than tracts in the Low access group, the reference level.
+
+## Part 6: The final model
+
+The features and transformations with the best CV_RMSE were logged rental density, store count, and distance to City Hall for predicting rent burden, thus will be included in the final model.
+
+```{r}
+
+f_final <- y ~ pct_single_parent + pct_immigrant + pct_uninsured + med_age + log1p(rentdev_per_sqmi) + n_hpss + dist_ch_mi
+
+m_final <- lm(f_final, data = tracts)
+summary(m_final)
+
+model_log <- model_log %>%
+  add_row(model = "final", added = "log rental density, store count, distance to City Hall",
+          cv_rmse = cv_rmse(f_final, tracts),
+          notes = "dropped distance to high-produce store, squared term, and food category")
+
+cv_rmse(f_final, tracts)
+model_log
+
+```
+
+```{r}
+tracts <- tracts %>% mutate(resid_final = residuals(m_final))
+
+ggplot(tracts) +
+  geom_sf(aes(fill = resid_final), color = NA) +
+  scale_fill_gradient2(low = "#2166ac", mid = "grey95", high = "#b2182b", midpoint = 0) +
+  theme_void() +
+  labs(title = "Final model: where it's wrong",
+       subtitle = "Red = actual higher than predicted",
+       fill = "Residual")
+
+```
+
+```{r}
+ggplot(tracts) +
+  geom_sf(aes(fill = resid_m1), color = NA) +
+  scale_fill_gradient2(low = "#2166ac", mid = "grey95", high = "#b2182b",
+                       midpoint = 0, limits = c(-60, 60)) +
+  theme_void() +
+  labs(title = "Baseline model (m1)", fill = "Residual")
+
+ggplot(tracts) +
+  geom_sf(aes(fill = resid_final), color = NA) +
+  scale_fill_gradient2(low = "#2166ac", mid = "grey95", high = "#b2182b",
+                       midpoint = 0, limits = c(-60, 60)) +
+  theme_void() +
+  labs(title = "Final model", fill = "Residual")
+```
+
+```{r}
+ggplot(tracts, aes(x = y_cv, y = abs(resid_final))) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(se = FALSE) +
+  labs(x = "CV of your outcome estimate (%)", y = "Size of the miss") +
+  theme_minimal()
+```
+
+## Part 7: Reflection
+
+The feature that lowered the CV RMSE the most was the log of rental license density, bringing it from 16.37 at baseline to 16.20. Without the log, rental density made the model slightly worse at 16.38. The raw density was right-skewed, and logging it let the model use differences between typical tracts instead of being pulled by a few extreme ones. This makes sense to me, since heavy rental licensing shows where landlords and new rental development are concentrated, which can push rents up faster than incomes. I was disappointed but not surprised that distance to high-produce grocery stores added noise, raising the CV RMSE to 16.40. Food access says more about neighborhood amenities than about rent and income. There could have been better features to use, but I was inspired by the data available on OpenDataPhilly. In my final model, the coefficient on single-parent households is 0.54. Holding the other variables constant, each additional percentage point of single-parent households is associated with a 0.54 percentage point higher share of renters spending 30% or more of their income on rent. For two otherwise identical tracts, the model predicts the one with 10 more percentage points of single-parent households to have a rent burden rate about 5.4 points higher. My residual maps showed clustering near universities, but I chose to investigate other variables first. In the future, I would add distance to the nearest university using OpenDataPhilly’s university locations, since students often report little income while paying market rent. Lastly, the fog plot shows that most tracts have a low CV, meaning their census estimates are reliable, yet the model still misses many of them. So most of the remaining errors likely come from things the model does not measure. The two tracts with CVs near 300 probably have very few renters, so their large misses reflect unreliable census estimates more than the model.
